@@ -374,6 +374,17 @@ void setup() {
   // Play boot animation
   accelerationAnimation();
 
+  // Display "OK" pattern to confirm update
+  delay(200);
+  setRow(1, B01111110);
+  setRow(2, B10000001);
+  setRow(3, B10000001);
+  setRow(4, B10000001);
+  setRow(5, B10000001);
+  setRow(6, B01111110);
+  delay(1500);
+  lc.clearDisplay(0);
+
   // Setup vibration sensor
   pinMode(SENSOR_PIN, INPUT);
   randomSeed(analogRead(A0));
