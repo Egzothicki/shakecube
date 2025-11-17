@@ -36,7 +36,7 @@ const int SENSOR_PIN = D1;      // GPIO 5 (Vibration sensor)
 // Settings
 const int LED_BRIGHTNESS = 8;    // 0-15 (higher = brighter)
 const int SHAKE_DEBOUNCE = 1000; // Milliseconds between animations
-const int NUM_ANIMATIONS = 6;
+const int NUM_ANIMATIONS = 5;    // Number of shake animations
 
 // WiFi Access Point
 const char* AP_NAME = "ShakeCube-Config";
@@ -73,174 +73,239 @@ void setRow(int row, byte value) {
 }
 
 // ============================================
-// ANIMATIONS
+// FONT DATA - 5x8 font for scrolling text
+// ============================================
+// Based on popular LED matrix fonts from Arduino community
+const byte font5x8[][5] PROGMEM = {
+  {0x00, 0x00, 0x00, 0x00, 0x00}, // 0: Space
+  {0x00, 0x00, 0x5F, 0x00, 0x00}, // 1: !
+  {0x7C, 0x12, 0x11, 0x12, 0x7C}, // 2: A
+  {0x7F, 0x49, 0x49, 0x49, 0x36}, // 3: B
+  {0x3E, 0x41, 0x41, 0x41, 0x22}, // 4: C
+  {0x7F, 0x41, 0x41, 0x22, 0x1C}, // 5: D
+  {0x7F, 0x49, 0x49, 0x49, 0x41}, // 6: E
+  {0x7F, 0x09, 0x09, 0x09, 0x01}, // 7: F
+  {0x3E, 0x41, 0x49, 0x49, 0x7A}, // 8: G
+  {0x7F, 0x08, 0x08, 0x08, 0x7F}, // 9: H
+  {0x00, 0x41, 0x7F, 0x41, 0x00}, // 10: I
+  {0x20, 0x40, 0x41, 0x3F, 0x01}, // 11: J
+  {0x7F, 0x08, 0x14, 0x22, 0x41}, // 12: K
+  {0x7F, 0x40, 0x40, 0x40, 0x40}, // 13: L
+  {0x7F, 0x02, 0x0C, 0x02, 0x7F}, // 14: M
+  {0x7F, 0x04, 0x08, 0x10, 0x7F}, // 15: N
+  {0x3E, 0x41, 0x41, 0x41, 0x3E}, // 16: O
+  {0x7F, 0x09, 0x09, 0x09, 0x06}, // 17: P
+  {0x3E, 0x41, 0x51, 0x21, 0x5E}, // 18: Q
+  {0x7F, 0x09, 0x19, 0x29, 0x46}, // 19: R
+  {0x46, 0x49, 0x49, 0x49, 0x31}, // 20: S
+  {0x01, 0x01, 0x7F, 0x01, 0x01}, // 21: T
+  {0x3F, 0x40, 0x40, 0x40, 0x3F}, // 22: U
+  {0x1F, 0x20, 0x40, 0x20, 0x1F}, // 23: V
+  {0x3F, 0x40, 0x38, 0x40, 0x3F}, // 24: W
+  {0x63, 0x14, 0x08, 0x14, 0x63}, // 25: X
+  {0x07, 0x08, 0x70, 0x08, 0x07}, // 26: Y
+  {0x61, 0x51, 0x49, 0x45, 0x43}, // 27: Z
+};
+
+// ============================================
+// EPIC ANIMATIONS FROM INTERNET/MAKER COMMUNITY
 // ============================================
 
-// ANIMATION 1: Spiral Effect - Lights spiral outward from center
-void animationSpiral(unsigned long duration) {
+// ANIMATION 1: Pac-Man - Classic arcade animation
+void animationPacMan(unsigned long duration) {
   unsigned long startTime = millis();
   
-  // Spiral path coordinates (center to edges)
-  int coords[][2] = {
-    {3,3}, {3,4}, {4,4}, {4,3}, {4,2}, {3,2}, {2,2}, {2,3}, {2,4}, {2,5},
-    {3,5}, {4,5}, {5,5}, {5,4}, {5,3}, {5,2}, {5,1}, {4,1}, {3,1}, {2,1},
-    {1,1}, {1,2}, {1,3}, {1,4}, {1,5}, {1,6}, {2,6}, {3,6}, {4,6}, {5,6},
-    {6,6}, {6,5}, {6,4}, {6,3}, {6,2}, {6,1}, {6,0}, {5,0}, {4,0}, {3,0},
-    {2,0}, {1,0}, {0,0}, {0,1}, {0,2}, {0,3}, {0,4}, {0,5}, {0,6}, {0,7},
-    {1,7}, {2,7}, {3,7}, {4,7}, {5,7}, {6,7}, {7,7}, {7,6}, {7,5}, {7,4},
-    {7,3}, {7,2}, {7,1}, {7,0}
-  };
-
+  // Pac-Man sprites (open/closed mouth)
+  byte pacOpen[8] = {B00111100, B01111000, B11110000, B11100000, B11110000, B01111000, B00111100, B00000000};
+  byte pacClosed[8] = {B00111100, B01111110, B11111110, B11111110, B11111110, B01111110, B00111100, B00000000};
+  
+  // Dots
+  byte dots[8] = {B00000000, B00000000, B00000000, B01010101, B00000000, B00000000, B00000000, B00000000};
+  
   while (millis() - startTime < duration) {
-    for (int i = 0; i < 64; i++) {
+    for (int pos = -8; pos < 16; pos++) {
       lc.clearDisplay(0);
-      // Draw tail of the spiral
-      for (int j = 0; j <= i && j < 64; j++) {
-        if (i - j < 8) {  // Only show last 8 positions
-          setLed(coords[j][0], coords[j][1], true);
+      
+      // Draw dots being eaten
+      for (int row = 0; row < 8; row++) {
+        byte dotPattern = dots[row];
+        if (pos >= 0 && pos < 8) {
+          dotPattern &= ~(0xFF << pos);  // Clear eaten dots
+        }
+        setRow(row, dotPattern);
+      }
+      
+      // Draw Pac-Man
+      if (pos >= 0 && pos < 8) {
+        byte* sprite = (pos % 2 == 0) ? pacOpen : pacClosed;
+        for (int row = 0; row < 8; row++) {
+          byte combined = dots[row] | (sprite[row] >> pos);
+          setRow(row, combined);
         }
       }
-      delay(30);
+      
+      delay(150);
       ArduinoOTA.handle();
     }
   }
   lc.clearDisplay(0);
 }
 
-// ANIMATION 2: Rain Effect - Random drops falling down
-void animationRain(unsigned long duration) {
+// ANIMATION 2: Heart Beat - Popular pulsing heart
+void animationHeartBeat(unsigned long duration) {
   unsigned long startTime = millis();
-  byte screen[8] = {0};
-
+  
+  // Heart patterns (small to large) from LED matrix tutorials
+  byte heartSmall[8] = {B00000000, B01100110, B11111111, B11111111, B01111110, B00111100, B00011000, B00000000};
+  byte heartLarge[8] = {B01100110, B11111111, B11111111, B11111111, B11111111, B01111110, B00111100, B00011000};
+  
   while (millis() - startTime < duration) {
-    // Shift all rows down
-    for (int row = 7; row > 0; row--) {
-      screen[row] = screen[row - 1];
-    }
-
-    // Add random drops at top
-    screen[0] = 0;
-    for (int col = 0; col < 8; col++) {
-      if (random(0, 3) == 0) {
-        screen[0] |= (1 << col);
-      }
-    }
-
-    // Update display
-    for (int row = 0; row < 8; row++) {
-      setRow(row, screen[row]);
-    }
-
-    delay(80);
+    // Beat 1
+    for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
+    delay(100);
+    for (int row = 0; row < 8; row++) setRow(row, heartLarge[row]);
+    delay(150);
+    for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
+    delay(100);
+    
+    // Beat 2
+    for (int row = 0; row < 8; row++) setRow(row, heartLarge[row]);
+    delay(150);
+    for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
+    delay(400);
+    
     ArduinoOTA.handle();
   }
   lc.clearDisplay(0);
 }
 
-// ANIMATION 3: Wave Effect - Sine wave moving across display
-void animationWave(unsigned long duration) {
+// ANIMATION 3: Fireworks - Exploding particles
+void animationFireworks(unsigned long duration) {
   unsigned long startTime = millis();
-
+  
   while (millis() - startTime < duration) {
-    for (int offset = 0; offset < 8; offset++) {
+    int centerX = random(2, 6);
+    int centerY = random(2, 6);
+    
+    // Launch
+    for (int i = 7; i > centerY; i--) {
       lc.clearDisplay(0);
-      for (int col = 0; col < 8; col++) {
-        int height = 4 + 3 * sin((col + offset) * 0.8);
-        if (height >= 0 && height < 8) {
-          for (int row = 0; row <= height; row++) {
-            setLed(7 - row, col, true);
+      setLed(i, centerX, true);
+      delay(50);
+      ArduinoOTA.handle();
+    }
+    
+    // Explode outward (classic explosion pattern from LED demos)
+    for (int radius = 0; radius < 5; radius++) {
+      lc.clearDisplay(0);
+      for (int angle = 0; angle < 16; angle++) {
+        float rad = angle * 3.14159 / 8.0;
+        int x = centerX + (int)(radius * cos(rad));
+        int y = centerY + (int)(radius * sin(rad));
+        if (x >= 0 && x < 8 && y >= 0 && y < 8) {
+          setLed(y, x, true);
+        }
+      }
+      delay(80);
+      ArduinoOTA.handle();
+    }
+    
+    delay(200);
+  }
+  lc.clearDisplay(0);
+}
+
+// ANIMATION 4: Snake/Worm - Slithering across display
+void animationSnake(unsigned long duration) {
+  unsigned long startTime = millis();
+  
+  int snakeX[32], snakeY[32];
+  int snakeLength = 8;
+  int headX = 0, headY = 3;
+  int dirX = 1, dirY = 0;
+  
+  // Initialize snake
+  for (int i = 0; i < snakeLength; i++) {
+    snakeX[i] = headX - i;
+    snakeY[i] = headY;
+  }
+  
+  while (millis() - startTime < duration) {
+    // Move head
+    headX += dirX;
+    headY += dirY;
+    
+    // Bounce off walls
+    if (headX < 0 || headX >= 8) { dirX = -dirX; headX += dirX * 2; }
+    if (headY < 0 || headY >= 8) { dirY = -dirY; headY += dirY * 2; }
+    
+    // Random direction changes
+    if (random(0, 10) == 0) {
+      if (dirX != 0) { dirX = 0; dirY = random(0, 2) * 2 - 1; }
+      else { dirY = 0; dirX = random(0, 2) * 2 - 1; }
+    }
+    
+    // Update body
+    for (int i = snakeLength - 1; i > 0; i--) {
+      snakeX[i] = snakeX[i-1];
+      snakeY[i] = snakeY[i-1];
+    }
+    snakeX[0] = headX;
+    snakeY[0] = headY;
+    
+    // Draw snake
+    lc.clearDisplay(0);
+    for (int i = 0; i < snakeLength; i++) {
+      if (snakeX[i] >= 0 && snakeX[i] < 8 && snakeY[i] >= 0 && snakeY[i] < 8) {
+        setLed(snakeY[i], snakeX[i], true);
+      }
+    }
+    
+    delay(120);
+    ArduinoOTA.handle();
+  }
+  lc.clearDisplay(0);
+}
+
+// ANIMATION 5: Scrolling Text - "SHAKEN!" 
+void animationScrollText(unsigned long duration) {
+  unsigned long startTime = millis();
+  const char* text = "SHAKEN!";
+  int textLen = strlen(text);
+  
+  while (millis() - startTime < duration) {
+    for (int scroll = 0; scroll < textLen * 6 + 8; scroll++) {
+      lc.clearDisplay(0);
+      
+      for (int charIndex = 0; charIndex < textLen; charIndex++) {
+        int charPos = charIndex * 6 - scroll + 8;
+        if (charPos >= -5 && charPos < 8) {
+          char c = text[charIndex];
+          int fontIndex = 0;
+          
+          // Map characters to font
+          if (c == ' ') fontIndex = 0;
+          else if (c == '!') fontIndex = 1;
+          else if (c >= 'A' && c <= 'Z') fontIndex = c - 'A' + 2;
+          else continue;
+          
+          // Draw character
+          for (int col = 0; col < 5; col++) {
+            if (charPos + col >= 0 && charPos + col < 8) {
+              byte columnData = pgm_read_byte(&font5x8[fontIndex][col]);
+              for (int row = 0; row < 8; row++) {
+                if (columnData & (1 << row)) {
+                  setLed(row, charPos + col, true);
+                }
+              }
+            }
           }
         }
       }
-      delay(100);
+      
+      delay(80);
       ArduinoOTA.handle();
     }
-  }
-  lc.clearDisplay(0);
-}
-
-// ANIMATION 4: Bouncing Ball - Ball bounces around the display
-void animationBouncingBall(unsigned long duration) {
-  unsigned long startTime = millis();
-  float x = 4, y = 4;
-  float vx = 0.8, vy = 0.6;
-
-  while (millis() - startTime < duration) {
-    lc.clearDisplay(0);
-
-    // Update position
-    x += vx;
-    y += vy;
-
-    // Bounce off walls
-    if (x < 0 || x > 7) {
-      vx = -vx;
-      x = constrain(x, 0, 7);
-    }
-    if (y < 0 || y > 7) {
-      vy = -vy;
-      y = constrain(y, 0, 7);
-    }
-
-    // Draw ball with trailing effect
-    setLed((int)x, (int)y, true);
-    setLed((int)(x - vx), (int)(y - vy), true);
-
-    delay(50);
-    ArduinoOTA.handle();
-  }
-  lc.clearDisplay(0);
-}
-
-// ANIMATION 5: Rotating Pattern - Blocks rotating
-void animationRotate(unsigned long duration) {
-  unsigned long startTime = millis();
-
-  byte patterns[4][8] = {
-    {B11110000, B11110000, B00000000, B00000000, B00000000, B00000000, B00001111, B00001111},
-    {B11000000, B11100000, B01110000, B00111000, B00011100, B00001110, B00000111, B00000011},
-    {B00001111, B00001111, B00000000, B00000000, B00000000, B00000000, B11110000, B11110000},
-    {B00000011, B00000111, B00001110, B00011100, B00111000, B01110000, B11100000, B11000000}
-  };
-
-  int patternIndex = 0;
-  while (millis() - startTime < duration) {
-    for (int row = 0; row < 8; row++) {
-      setRow(row, patterns[patternIndex][row]);
-    }
-    patternIndex = (patternIndex + 1) % 4;
-    delay(150);
-    ArduinoOTA.handle();
-  }
-  lc.clearDisplay(0);
-}
-
-// ANIMATION 6: Matrix Rain - Matrix-style falling code
-void animationMatrix(unsigned long duration) {
-  unsigned long startTime = millis();
-  byte screen[8] = {0};
-
-  while (millis() - startTime < duration) {
-    // Shift all rows down
-    for (int row = 7; row > 0; row--) {
-      screen[row] = screen[row - 1];
-    }
-
-    // Add sparse random drops at top
-    screen[0] = 0;
-    for (int col = 0; col < 8; col++) {
-      if (random(0, 10) == 0) {
-        screen[0] |= (1 << col);
-      }
-    }
-
-    // Update display
-    for (int row = 0; row < 8; row++) {
-      setRow(row, screen[row]);
-    }
-
-    delay(60);
-    ArduinoOTA.handle();
   }
   lc.clearDisplay(0);
 }
@@ -330,12 +395,11 @@ void playRandomAnimation() {
   Serial.println("s");
 
   switch (choice) {
-    case 0: animationSpiral(duration); break;
-    case 1: animationRain(duration); break;
-    case 2: animationWave(duration); break;
-    case 3: animationBouncingBall(duration); break;
-    case 4: animationRotate(duration); break;
-    case 5: animationMatrix(duration); break;
+    case 0: animationPacMan(duration); break;
+    case 1: animationHeartBeat(duration); break;
+    case 2: animationFireworks(duration); break;
+    case 3: animationSnake(duration); break;
+    case 4: animationScrollText(duration); break;
   }
 }
 
