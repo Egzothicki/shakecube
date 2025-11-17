@@ -1,3 +1,20 @@
+/*
+ * SHAKE CUBE - Interactive LED Animation Device
+ * 
+ * Hardware:
+ * - ESP8266 (NodeMCU v2)
+ * - 8x8 LED Matrix (MAX7219)
+ * - Vibration Sensor (SW-420)
+ * 
+ * Features:
+ * - Detects shaking and plays random animations
+ * - WiFi access point for wireless updates
+ * - 6 different animations + boot animation
+ * 
+ * Update via phone: Connect to "ShakeCube-Config" WiFi
+ * Then visit http://192.168.4.1/update
+ */
+
 #include "LedControl.h"
 #include <ArduinoOTA.h>
 #include <ESP8266HTTPUpdateServer.h>
@@ -6,41 +23,49 @@
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 
-//--- Pin Definitions ---
-// MAX7219 Pins (From your code)
-const int MATRIX_DIN_PIN = 13; // D7
-const int MATRIX_CLK_PIN = 14; // D5
-const int MATRIX_CS_PIN = 15;  // D8
+// ============================================
+// CONFIGURATION
+// ============================================
 
-// *** NEW SENSOR PIN ***
-const int SENSOR_PIN = D1; // GPIO 5
+// Pin Definitions
+const int MATRIX_DIN_PIN = 13;  // D7
+const int MATRIX_CLK_PIN = 14;  // D5
+const int MATRIX_CS_PIN = 15;   // D8
+const int SENSOR_PIN = D1;      // GPIO 5 (Vibration sensor)
 
-// LedControl(DIN, CLK, CS, Number of matrices)
+// Settings
+const int LED_BRIGHTNESS = 8;    // 0-15 (higher = brighter)
+const int SHAKE_DEBOUNCE = 1000; // Milliseconds between animations
+const int NUM_ANIMATIONS = 5;    // Number of shake animations
+
+// WiFi Access Point
+const char* AP_NAME = "ShakeCube-Config";
+const char* AP_PASSWORD = "shakecube123";
+
+// ============================================
+// HARDWARE SETUP
+// ============================================
+
 LedControl lc = LedControl(MATRIX_DIN_PIN, MATRIX_CLK_PIN, MATRIX_CS_PIN, 1);
-
-// Web server for OTA updates
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
 
-// Animation timing
 unsigned long lastShakeTime = 0;
-const int NUM_ANIMATIONS = 6;
 
-// Helper function to set LED (flipped for upside-down display)
-void setLed(int row, int col, bool state)
-{
+// ============================================
+// DISPLAY HELPER FUNCTIONS
+// ============================================
+// Note: Display is mounted upside-down, so coordinates are flipped
+
+void setLed(int row, int col, bool state) {
   lc.setLed(0, 7 - row, 7 - col, state);
 }
 
-// Helper function to set row (flipped for upside-down display)
-void setRow(int row, byte value)
-{
-  // Reverse the bits in the byte
+void setRow(int row, byte value) {
+  // Reverse the bits for upside-down display
   byte reversed = 0;
-  for (int i = 0; i < 8; i++)
-  {
-    if (value & (1 << i))
-    {
+  for (int i = 0; i < 8; i++) {
+    if (value & (1 << i)) {
       reversed |= (1 << (7 - i));
     }
   }
@@ -48,255 +73,362 @@ void setRow(int row, byte value)
 }
 
 // ============================================
-// ANIMATION 1: Spiral Effect
+// FONT DATA - 5x8 font for scrolling text
 // ============================================
-void animationSpiral(unsigned long duration)
-{
+// Based on popular LED matrix fonts from Arduino community
+const byte font5x8[][5] PROGMEM = {
+  {0x00, 0x00, 0x00, 0x00, 0x00}, // 0: Space
+  {0x00, 0x00, 0x5F, 0x00, 0x00}, // 1: !
+  {0x7C, 0x12, 0x11, 0x12, 0x7C}, // 2: A
+  {0x7F, 0x49, 0x49, 0x49, 0x36}, // 3: B
+  {0x3E, 0x41, 0x41, 0x41, 0x22}, // 4: C
+  {0x7F, 0x41, 0x41, 0x22, 0x1C}, // 5: D
+  {0x7F, 0x49, 0x49, 0x49, 0x41}, // 6: E
+  {0x7F, 0x09, 0x09, 0x09, 0x01}, // 7: F
+  {0x3E, 0x41, 0x49, 0x49, 0x7A}, // 8: G
+  {0x7F, 0x08, 0x08, 0x08, 0x7F}, // 9: H
+  {0x00, 0x41, 0x7F, 0x41, 0x00}, // 10: I
+  {0x20, 0x40, 0x41, 0x3F, 0x01}, // 11: J
+  {0x7F, 0x08, 0x14, 0x22, 0x41}, // 12: K
+  {0x7F, 0x40, 0x40, 0x40, 0x40}, // 13: L
+  {0x7F, 0x02, 0x0C, 0x02, 0x7F}, // 14: M
+  {0x7F, 0x04, 0x08, 0x10, 0x7F}, // 15: N
+  {0x3E, 0x41, 0x41, 0x41, 0x3E}, // 16: O
+  {0x7F, 0x09, 0x09, 0x09, 0x06}, // 17: P
+  {0x3E, 0x41, 0x51, 0x21, 0x5E}, // 18: Q
+  {0x7F, 0x09, 0x19, 0x29, 0x46}, // 19: R
+  {0x46, 0x49, 0x49, 0x49, 0x31}, // 20: S
+  {0x01, 0x01, 0x7F, 0x01, 0x01}, // 21: T
+  {0x3F, 0x40, 0x40, 0x40, 0x3F}, // 22: U
+  {0x1F, 0x20, 0x40, 0x20, 0x1F}, // 23: V
+  {0x3F, 0x40, 0x38, 0x40, 0x3F}, // 24: W
+  {0x63, 0x14, 0x08, 0x14, 0x63}, // 25: X
+  {0x07, 0x08, 0x70, 0x08, 0x07}, // 26: Y
+  {0x61, 0x51, 0x49, 0x45, 0x43}, // 27: Z
+};
+
+// ============================================
+// EPIC ANIMATIONS FROM INTERNET/MAKER COMMUNITY
+// ============================================
+
+// ANIMATION 1: Pac-Man - Classic arcade animation with trail dimming
+void animationPacMan(unsigned long duration) {
   unsigned long startTime = millis();
-
-  while (millis() - startTime < duration)
-  {
-    // Spiral coordinates
-    int coords[][2] = {
-        {3, 3}, {3, 4}, {4, 4}, {4, 3}, {4, 2}, {3, 2}, {2, 2}, {2, 3}, {2, 4}, {2, 5}, {3, 5}, {4, 5}, {5, 5}, {5, 4}, {5, 3}, {5, 2}, {5, 1}, {4, 1}, {3, 1}, {2, 1}, {1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}, {2, 6}, {3, 6}, {4, 6}, {5, 6}, {6, 6}, {6, 5}, {6, 4}, {6, 3}, {6, 2}, {6, 1}, {6, 0}, {5, 0}, {4, 0}, {3, 0}, {2, 0}, {1, 0}, {0, 0}, {0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5}, {0, 6}, {0, 7}, {1, 7}, {2, 7}, {3, 7}, {4, 7}, {5, 7}, {6, 7}, {7, 7}, {7, 6}, {7, 5}, {7, 4}, {7, 3}, {7, 2}, {7, 1}, {7, 0}};
-
-    for (int i = 0; i < 64; i++)
-    {
+  
+  // Pac-Man sprites (open/closed mouth)
+  byte pacOpen[8] = {B00111100, B01111000, B11110000, B11100000, B11110000, B01111000, B00111100, B00000000};
+  byte pacClosed[8] = {B00111100, B01111110, B11111110, B11111110, B11111110, B01111110, B00111100, B00000000};
+  
+  // Dots
+  byte dots[8] = {B00000000, B00000000, B00000000, B01010101, B00000000, B00000000, B00000000, B00000000};
+  
+  // Trail memory for dimming effect
+  bool trail[8][8] = {false};
+  int trailAge[8][8] = {0};
+  
+  while (millis() - startTime < duration) {
+    for (int pos = -8; pos < 16; pos++) {
       lc.clearDisplay(0);
-      for (int j = 0; j <= i && j < 64; j++)
-      {
-        if (i - j < 8)
-        {
-          setLed(coords[j][0], coords[j][1], true);
+      
+      // Age the trail
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          if (trailAge[row][col] > 0) trailAge[row][col]++;
         }
       }
-      delay(30);
+      
+      // Draw dots being eaten
+      for (int row = 0; row < 8; row++) {
+        byte dotPattern = dots[row];
+        if (pos >= 0 && pos < 8) {
+          dotPattern &= ~(0xFF << pos);  // Clear eaten dots
+        }
+        setRow(row, dotPattern);
+      }
+      
+      // Draw Pac-Man and mark trail
+      if (pos >= 0 && pos < 8) {
+        byte* sprite = (pos % 2 == 0) ? pacOpen : pacClosed;
+        for (int row = 0; row < 8; row++) {
+          byte combined = dots[row] | (sprite[row] >> pos);
+          setRow(row, combined);
+          
+          // Mark pac-man position in trail
+          if (sprite[row] & (0x80 >> pos)) {
+            trail[row][pos] = true;
+            trailAge[row][pos] = 1;
+          }
+        }
+      }
+      
+      // Draw dimming trail behind pac-man (show older positions with decreasing probability)
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          if (trail[row][col] && trailAge[row][col] > 1 && trailAge[row][col] < 6) {
+            // Show with decreasing probability based on age
+            if (random(0, trailAge[row][col]) == 0) {
+              setLed(row, col, true);
+            }
+          }
+          // Clear very old trail
+          if (trailAge[row][col] > 5) {
+            trail[row][col] = false;
+            trailAge[row][col] = 0;
+          }
+        }
+      }
+      
+      delay(150);
       ArduinoOTA.handle();
     }
   }
   lc.clearDisplay(0);
 }
 
-// ============================================
-// ANIMATION 2: Rain Effect
-// ============================================
-void animationRain(unsigned long duration)
-{
+// ANIMATION 2: Heart Beat - Popular pulsing heart with smooth dimming
+void animationHeartBeat(unsigned long duration) {
   unsigned long startTime = millis();
-  byte screen[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-
-  while (millis() - startTime < duration)
-  {
-    // Move everything down
-    for (int row = 7; row > 0; row--)
-    {
-      screen[row] = screen[row - 1];
+  
+  // Heart patterns (small to large) from LED matrix tutorials
+  byte heartSmall[8] = {B00000000, B01100110, B11111111, B11111111, B01111110, B00111100, B00011000, B00000000};
+  byte heartLarge[8] = {B01100110, B11111111, B11111111, B11111111, B11111111, B01111110, B00111100, B00011000};
+  
+  while (millis() - startTime < duration) {
+    // Beat 1 - with fade in/out using intensity
+    for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
+    delay(100);
+    
+    // Fade up
+    for (int brightness = 4; brightness <= LED_BRIGHTNESS; brightness += 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
     }
-
-    // Random new drops at top
-    screen[0] = 0;
-    for (int col = 0; col < 8; col++)
-    {
-      if (random(0, 3) == 0)
-      {
-        screen[0] |= (1 << col);
-      }
+    for (int row = 0; row < 8; row++) setRow(row, heartLarge[row]);
+    delay(100);
+    
+    // Fade down
+    for (int brightness = LED_BRIGHTNESS; brightness >= 4; brightness -= 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
     }
-
-    // Draw the screen
-    for (int row = 0; row < 8; row++)
-    {
-      setRow(row, screen[row]);
+    lc.setIntensity(0, LED_BRIGHTNESS); // Reset
+    for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
+    delay(100);
+    
+    // Beat 2
+    for (int brightness = 4; brightness <= LED_BRIGHTNESS; brightness += 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
     }
-
-    delay(80);
+    for (int row = 0; row < 8; row++) setRow(row, heartLarge[row]);
+    delay(100);
+    
+    for (int brightness = LED_BRIGHTNESS; brightness >= 4; brightness -= 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
+    }
+    lc.setIntensity(0, LED_BRIGHTNESS); // Reset
+    for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
+    delay(300);
+    
     ArduinoOTA.handle();
   }
+  lc.setIntensity(0, LED_BRIGHTNESS); // Ensure reset
   lc.clearDisplay(0);
 }
 
-// ============================================
-// ANIMATION 3: Wave Effect
-// ============================================
-void animationWave(unsigned long duration)
-{
+// ANIMATION 3: Fireworks - Exploding particles with dimming fade
+void animationFireworks(unsigned long duration) {
   unsigned long startTime = millis();
-
-  while (millis() - startTime < duration)
-  {
-    for (int offset = 0; offset < 8; offset++)
-    {
+  
+  while (millis() - startTime < duration) {
+    int centerX = random(2, 6);
+    int centerY = random(2, 6);
+    
+    // Launch
+    for (int i = 7; i > centerY; i--) {
       lc.clearDisplay(0);
-      for (int col = 0; col < 8; col++)
-      {
-        int height = 4 + 3 * sin((col + offset) * 0.8);
-        if (height >= 0 && height < 8)
-        {
-          for (int row = 0; row <= height; row++)
-          {
-            setLed(7 - row, col, true);
+      setLed(i, centerX, true);
+      delay(50);
+      ArduinoOTA.handle();
+    }
+    
+    // Store explosion pattern for dimming effect
+    bool explosion[8][8] = {false};
+    
+    // Explode outward - build up pattern
+    for (int radius = 0; radius < 5; radius++) {
+      for (int angle = 0; angle < 16; angle++) {
+        float rad = angle * 3.14159 / 8.0;
+        int x = centerX + (int)(radius * cos(rad));
+        int y = centerY + (int)(radius * sin(rad));
+        if (x >= 0 && x < 8 && y >= 0 && y < 8) {
+          explosion[y][x] = true;
+        }
+      }
+      
+      // Draw current explosion state
+      lc.clearDisplay(0);
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          if (explosion[row][col]) setLed(row, col, true);
+        }
+      }
+      delay(80);
+      ArduinoOTA.handle();
+    }
+    
+    // Dimming effect - fade out by showing progressively fewer LEDs
+    for (int fade = 0; fade < 4; fade++) {
+      lc.clearDisplay(0);
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          // Only show LED based on fade level and random chance
+          if (explosion[row][col] && random(0, fade + 1) == 0) {
+            setLed(row, col, true);
           }
         }
       }
       delay(100);
       ArduinoOTA.handle();
     }
+    
+    delay(200);
   }
   lc.clearDisplay(0);
 }
 
-// ============================================
-// ANIMATION 4: Bouncing Ball
-// ============================================
-void animationBouncingBall(unsigned long duration)
-{
+// ANIMATION 4: Snake/Worm - Slithering across display with fading tail
+void animationSnake(unsigned long duration) {
   unsigned long startTime = millis();
-  float x = 4, y = 4;
-  float vx = 0.8, vy = 0.6;
-
-  while (millis() - startTime < duration)
-  {
-    lc.clearDisplay(0);
-
-    // Update position
-    x += vx;
-    y += vy;
-
+  
+  int snakeX[32], snakeY[32];
+  int snakeLength = 10;
+  int headX = 0, headY = 3;
+  int dirX = 1, dirY = 0;
+  
+  // Initialize snake
+  for (int i = 0; i < snakeLength; i++) {
+    snakeX[i] = headX - i;
+    snakeY[i] = headY;
+  }
+  
+  while (millis() - startTime < duration) {
+    // Move head
+    headX += dirX;
+    headY += dirY;
+    
     // Bounce off walls
-    if (x < 0 || x > 7)
-    {
-      vx = -vx;
-      x = constrain(x, 0, 7);
+    if (headX < 0 || headX >= 8) { dirX = -dirX; headX += dirX * 2; }
+    if (headY < 0 || headY >= 8) { dirY = -dirY; headY += dirY * 2; }
+    
+    // Random direction changes
+    if (random(0, 10) == 0) {
+      if (dirX != 0) { dirX = 0; dirY = random(0, 2) * 2 - 1; }
+      else { dirY = 0; dirX = random(0, 2) * 2 - 1; }
     }
-    if (y < 0 || y > 7)
-    {
-      vy = -vy;
-      y = constrain(y, 0, 7);
+    
+    // Update body
+    for (int i = snakeLength - 1; i > 0; i--) {
+      snakeX[i] = snakeX[i-1];
+      snakeY[i] = snakeY[i-1];
     }
-
-    // Draw ball with trail
-    setLed((int)x, (int)y, true);
-    setLed((int)(x - vx), (int)(y - vy), true);
-
-    delay(50);
-    ArduinoOTA.handle();
-  }
-  lc.clearDisplay(0);
-}
-
-// ============================================
-// ANIMATION 5: Rotating Pattern
-// ============================================
-void animationRotate(unsigned long duration)
-{
-  unsigned long startTime = millis();
-
-  byte patterns[4][8] = {{B11110000, B11110000, B00000000, B00000000, B00000000,
-                          B00000000, B00001111, B00001111},
-                         {B11000000, B11100000, B01110000, B00111000, B00011100,
-                          B00001110, B00000111, B00000011},
-                         {B00001111, B00001111, B00000000, B00000000, B00000000,
-                          B00000000, B11110000, B11110000},
-                         {B00000011, B00000111, B00001110, B00011100, B00111000,
-                          B01110000, B11100000, B11000000}};
-
-  int patternIndex = 0;
-  while (millis() - startTime < duration)
-  {
-    for (int row = 0; row < 8; row++)
-    {
-      setRow(row, patterns[patternIndex][row]);
-    }
-    patternIndex = (patternIndex + 1) % 4;
-    delay(150);
-    ArduinoOTA.handle();
-  }
-  lc.clearDisplay(0);
-}
-
-// ============================================
-// ANIMATION 6: Matrix Rain
-// ============================================
-void animationMatrix(unsigned long duration)
-{
-  unsigned long startTime = millis();
-  byte screen[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-
-  while (millis() - startTime < duration)
-  {
-    // Move everything down
-    for (int row = 7; row > 0; row--)
-    {
-      screen[row] = screen[row - 1];
-    }
-
-    // Add new drops at top randomly
-    screen[0] = 0;
-    for (int col = 0; col < 8; col++)
-    {
-      if (random(0, 10) == 0)
-      {
-        screen[0] |= (1 << col);
+    snakeX[0] = headX;
+    snakeY[0] = headY;
+    
+    // Draw snake with fading tail (simulate dimming by skipping tail segments)
+    lc.clearDisplay(0);
+    for (int i = 0; i < snakeLength; i++) {
+      if (snakeX[i] >= 0 && snakeX[i] < 8 && snakeY[i] >= 0 && snakeY[i] < 8) {
+        // Tail segments fade out - show with decreasing probability
+        int fadeChance = i * 2; // Tail gets dimmer
+        if (i < 3 || random(0, fadeChance) < 5) {  // Head always shows, tail fades
+          setLed(snakeY[i], snakeX[i], true);
+        }
       }
     }
-
-    // Draw the screen
-    for (int row = 0; row < 8; row++)
-    {
-      setRow(row, screen[row]);
-    }
-
-    delay(60);
+    
+    delay(120);
     ArduinoOTA.handle();
   }
   lc.clearDisplay(0);
 }
 
-// ============================================
-// ACCELERATION ANIMATION - Flying through space
-// ============================================
-void accelerationAnimation()
-{
+// ANIMATION 5: Scrolling Text - "SHAKEN!" 
+void animationScrollText(unsigned long duration) {
+  unsigned long startTime = millis();
+  const char* text = "SHAKEN!";
+  int textLen = strlen(text);
+  
+  while (millis() - startTime < duration) {
+    for (int scroll = 0; scroll < textLen * 6 + 8; scroll++) {
+      lc.clearDisplay(0);
+      
+      for (int charIndex = 0; charIndex < textLen; charIndex++) {
+        int charPos = charIndex * 6 - scroll + 8;
+        if (charPos >= -5 && charPos < 8) {
+          char c = text[charIndex];
+          int fontIndex = 0;
+          
+          // Map characters to font
+          if (c == ' ') fontIndex = 0;
+          else if (c == '!') fontIndex = 1;
+          else if (c >= 'A' && c <= 'Z') fontIndex = c - 'A' + 2;
+          else continue;
+          
+          // Draw character
+          for (int col = 0; col < 5; col++) {
+            if (charPos + col >= 0 && charPos + col < 8) {
+              byte columnData = pgm_read_byte(&font5x8[fontIndex][col]);
+              for (int row = 0; row < 8; row++) {
+                if (columnData & (1 << row)) {
+                  setLed(row, charPos + col, true);
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      delay(80);
+      ArduinoOTA.handle();
+    }
+  }
+  lc.clearDisplay(0);
+}
+
+// BOOT ANIMATION: Hyperspace Jump - Stars flying toward you
+void accelerationAnimation() {
   lc.clearDisplay(0);
 
-  // Create stars at random positions with different speeds
-  struct Star
-  {
-    float row;
-    float col;
-    float speed;
+  struct Star {
+    float row, col, speed;
   };
-
   Star stars[12];
 
-  // Initialize stars at center area
-  for (int i = 0; i < 12; i++)
-  {
+  // Initialize stars near center
+  for (int i = 0; i < 12; i++) {
     stars[i].row = 3.5 + random(-10, 10) / 10.0;
     stars[i].col = 3.5 + random(-10, 10) / 10.0;
     stars[i].speed = 0.1 + (i * 0.05);
   }
 
-  // Animate stars moving outward from center (approaching viewer)
-  for (int frame = 0; frame < 50; frame++)
-  {
+  // Animate stars flying outward (approaching viewer)
+  for (int frame = 0; frame < 50; frame++) {
     lc.clearDisplay(0);
 
-    for (int i = 0; i < 12; i++)
-    {
+    for (int i = 0; i < 12; i++) {
       // Calculate direction from center
       float dirRow = stars[i].row - 3.5;
       float dirCol = stars[i].col - 3.5;
-
-      // Normalize direction
       float dist = sqrt(dirRow * dirRow + dirCol * dirCol);
-      if (dist > 0.1)
-      {
+      
+      if (dist > 0.1) {
         dirRow /= dist;
         dirCol /= dist;
       }
 
-      // Move star outward (accelerating over time)
+      // Move star outward with acceleration
       float accel = 1.0 + (frame * 0.08);
       stars[i].row += dirRow * stars[i].speed * accel;
       stars[i].col += dirCol * stars[i].speed * accel;
@@ -304,38 +436,31 @@ void accelerationAnimation()
       // Draw star if in bounds
       int r = (int)stars[i].row;
       int c = (int)stars[i].col;
-      if (r >= 0 && r < 8 && c >= 0 && c < 8)
-      {
+      if (r >= 0 && r < 8 && c >= 0 && c < 8) {
         setLed(r, c, true);
 
         // Draw trail for faster stars
-        if (frame > 20 && stars[i].speed > 0.3)
-        {
-          int prevR =
-              (int)(stars[i].row - dirRow * stars[i].speed * accel * 0.5);
-          int prevC =
-              (int)(stars[i].col - dirCol * stars[i].speed * accel * 0.5);
-          if (prevR >= 0 && prevR < 8 && prevC >= 0 && prevC < 8)
-          {
+        if (frame > 20 && stars[i].speed > 0.3) {
+          int prevR = (int)(stars[i].row - dirRow * stars[i].speed * accel * 0.5);
+          int prevC = (int)(stars[i].col - dirCol * stars[i].speed * accel * 0.5);
+          if (prevR >= 0 && prevR < 8 && prevC >= 0 && prevC < 8) {
             setLed(prevR, prevC, true);
           }
         }
       }
 
-      // Reset star if it goes off screen
-      if (r < 0 || r >= 8 || c < 0 || c >= 8)
-      {
+      // Reset star if off-screen
+      if (r < 0 || r >= 8 || c < 0 || c >= 8) {
         stars[i].row = 3.5 + random(-5, 5) / 10.0;
         stars[i].col = 3.5 + random(-5, 5) / 10.0;
       }
     }
 
-    delay(max(5, 40 - frame)); // Speed up over time
+    delay(max(5, 40 - frame));  // Speed up over time
   }
 
-  // Final bright flash (entering hyperspace)
-  for (int row = 0; row < 8; row++)
-  {
+  // Final hyperspace flash
+  for (int row = 0; row < 8; row++) {
     setRow(row, B11111111);
   }
   delay(150);
@@ -343,117 +468,103 @@ void accelerationAnimation()
 }
 
 // ============================================
-// Play random animation
+// ANIMATION CONTROLLER
 // ============================================
-void playRandomAnimation()
-{
-  int animationChoice = random(0, NUM_ANIMATIONS);
-  unsigned long duration = random(5000, 10001); // 5-10 seconds
 
-  Serial.print("Playing animation #");
-  Serial.print(animationChoice);
+void playRandomAnimation() {
+  int choice = random(0, NUM_ANIMATIONS);
+  unsigned long duration = random(5000, 10001);  // 5-10 seconds
+
+  Serial.print("Animation #");
+  Serial.print(choice);
   Serial.print(" for ");
   Serial.print(duration / 1000.0);
-  Serial.println(" seconds");
+  Serial.println("s");
 
-  switch (animationChoice)
-  {
-  case 0:
-    animationSpiral(duration);
-    break;
-  case 1:
-    animationRain(duration);
-    break;
-  case 2:
-    animationWave(duration);
-    break;
-  case 3:
-    animationBouncingBall(duration);
-    break;
-  case 4:
-    animationRotate(duration);
-    break;
-  case 5:
-    animationMatrix(duration);
-    break;
+  switch (choice) {
+    case 0: animationPacMan(duration); break;
+    case 1: animationHeartBeat(duration); break;
+    case 2: animationFireworks(duration); break;
+    case 3: animationSnake(duration); break;
+    case 4: animationScrollText(duration); break;
   }
 }
 
-void setup()
-{
+// ============================================
+// SETUP
+// ============================================
+
+void setup() {
   Serial.begin(115200);
-  Serial.println("\nBooting Shake Cube...");
+  Serial.println("\n=== SHAKE CUBE BOOTING ===");
 
-  // --- Setup MAX7219 FIRST ---
-  lc.shutdown(0, false); // Wake up the matrix
-  lc.setIntensity(0, 8); // Set brightness (0-15)
-  lc.clearDisplay(0);    // Clear the display
+  // Initialize LED Matrix
+  lc.shutdown(0, false);
+  lc.setIntensity(0, LED_BRIGHTNESS);
+  lc.clearDisplay(0);
 
-  // --- Start WiFi Access Point Mode ---
-  Serial.println("Starting Access Point mode...");
+  // Create WiFi Access Point
+  Serial.println("Starting WiFi AP...");
   WiFi.mode(WIFI_AP);
-  WiFi.softAP("ShakeCube-Config", "shakecube123");
+  WiFi.softAP(AP_NAME, AP_PASSWORD);
+  Serial.print("Connect to: ");
+  Serial.print(AP_NAME);
+  Serial.print(" (password: ");
+  Serial.print(AP_PASSWORD);
+  Serial.println(")");
+  Serial.print("Update URL: http://");
+  Serial.print(WiFi.softAPIP());
+  Serial.println("/update");
 
-  Serial.println("Access Point Started!");
-  Serial.print("AP IP Address: ");
-  Serial.println(WiFi.softAPIP());
-  Serial.println(
-      "Connect to 'ShakeCube-Config' WiFi network (password: shakecube123)");
-
-  // --- Setup OTA (Over-The-Air Updates) ---
+  // Setup OTA updates
   ArduinoOTA.setHostname("ShakeCube");
   ArduinoOTA.begin();
-  Serial.println("OTA enabled!");
-
-  // --- Setup Web Server for Browser-Based Updates ---
   httpUpdater.setup(&httpServer, "/update");
   httpServer.begin();
-  Serial.println("Web server started!");
-  Serial.println("Visit http://192.168.4.1/update to upload firmware");
 
-  // *** PLAY ACCELERATION ANIMATION AFTER BOOT ***
+  // Play boot animation
   accelerationAnimation();
 
-  // *** SETUP THE SENSOR ***
-  pinMode(SENSOR_PIN, INPUT); // Set the sensor pin as an input
+  // Display "OK" pattern to confirm update
+  delay(200);
+  setRow(1, B01111110);
+  setRow(2, B10000001);
+  setRow(3, B10000001);
+  setRow(4, B10000001);
+  setRow(5, B10000001);
+  setRow(6, B01111110);
+  delay(1500);
+  lc.clearDisplay(0);
 
-  // Seed random number generator
+  // Setup vibration sensor
+  pinMode(SENSOR_PIN, INPUT);
   randomSeed(analogRead(A0));
 
-  Serial.println("Shake Cube Ready!");
+  Serial.println("=== READY TO SHAKE! ===\n");
 }
 
-void loop()
-{
-  // This is required for OTA to work
-  ArduinoOTA.handle();
+// ============================================
+// MAIN LOOP
+// ============================================
 
-  // Handle web server requests
+void loop() {
+  // Handle OTA and web server
+  ArduinoOTA.handle();
   httpServer.handleClient();
 
-  // Read the digital sensor value
-  // The SW-420 module's D0 pin goes LOW when vibration is detected
-  int sensorValue = digitalRead(SENSOR_PIN);
-
-  if (sensorValue == LOW)
-  {
-    // Check if enough time has passed since last animation (debounce)
-    if (millis() - lastShakeTime > 1000)
-    {
-      // --- VIBRATION DETECTED ---
-      Serial.println("SHAKE DETECTED! Starting epic animation...");
-
+  // Read vibration sensor (LOW = shake detected)
+  if (digitalRead(SENSOR_PIN) == LOW) {
+    // Debounce: Only trigger if enough time has passed
+    if (millis() - lastShakeTime > SHAKE_DEBOUNCE) {
+      Serial.println("\n🎲 SHAKE DETECTED!");
+      
       lastShakeTime = millis();
-
-      // Play a random epic animation for 5-10 seconds
       playRandomAnimation();
-
-      // Clear and show ready
+      
       lc.clearDisplay(0);
-      Serial.println("Animation complete. Ready for next shake!");
+      Serial.println("✓ Ready for next shake!\n");
     }
   }
 
-  // Small delay to prevent excessive CPU usage
   delay(10);
 }
