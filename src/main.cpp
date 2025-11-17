@@ -111,7 +111,7 @@ const byte font5x8[][5] PROGMEM = {
 // EPIC ANIMATIONS FROM INTERNET/MAKER COMMUNITY
 // ============================================
 
-// ANIMATION 1: Pac-Man - Classic arcade animation
+// ANIMATION 1: Pac-Man - Classic arcade animation with trail dimming
 void animationPacMan(unsigned long duration) {
   unsigned long startTime = millis();
   
@@ -122,9 +122,20 @@ void animationPacMan(unsigned long duration) {
   // Dots
   byte dots[8] = {B00000000, B00000000, B00000000, B01010101, B00000000, B00000000, B00000000, B00000000};
   
+  // Trail memory for dimming effect
+  bool trail[8][8] = {false};
+  int trailAge[8][8] = {0};
+  
   while (millis() - startTime < duration) {
     for (int pos = -8; pos < 16; pos++) {
       lc.clearDisplay(0);
+      
+      // Age the trail
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          if (trailAge[row][col] > 0) trailAge[row][col]++;
+        }
+      }
       
       // Draw dots being eaten
       for (int row = 0; row < 8; row++) {
@@ -135,12 +146,35 @@ void animationPacMan(unsigned long duration) {
         setRow(row, dotPattern);
       }
       
-      // Draw Pac-Man
+      // Draw Pac-Man and mark trail
       if (pos >= 0 && pos < 8) {
         byte* sprite = (pos % 2 == 0) ? pacOpen : pacClosed;
         for (int row = 0; row < 8; row++) {
           byte combined = dots[row] | (sprite[row] >> pos);
           setRow(row, combined);
+          
+          // Mark pac-man position in trail
+          if (sprite[row] & (0x80 >> pos)) {
+            trail[row][pos] = true;
+            trailAge[row][pos] = 1;
+          }
+        }
+      }
+      
+      // Draw dimming trail behind pac-man (show older positions with decreasing probability)
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          if (trail[row][col] && trailAge[row][col] > 1 && trailAge[row][col] < 6) {
+            // Show with decreasing probability based on age
+            if (random(0, trailAge[row][col]) == 0) {
+              setLed(row, col, true);
+            }
+          }
+          // Clear very old trail
+          if (trailAge[row][col] > 5) {
+            trail[row][col] = false;
+            trailAge[row][col] = 0;
+          }
         }
       }
       
@@ -151,7 +185,7 @@ void animationPacMan(unsigned long duration) {
   lc.clearDisplay(0);
 }
 
-// ANIMATION 2: Heart Beat - Popular pulsing heart
+// ANIMATION 2: Heart Beat - Popular pulsing heart with smooth dimming
 void animationHeartBeat(unsigned long duration) {
   unsigned long startTime = millis();
   
@@ -160,26 +194,50 @@ void animationHeartBeat(unsigned long duration) {
   byte heartLarge[8] = {B01100110, B11111111, B11111111, B11111111, B11111111, B01111110, B00111100, B00011000};
   
   while (millis() - startTime < duration) {
-    // Beat 1
+    // Beat 1 - with fade in/out using intensity
     for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
     delay(100);
+    
+    // Fade up
+    for (int brightness = 4; brightness <= LED_BRIGHTNESS; brightness += 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
+    }
     for (int row = 0; row < 8; row++) setRow(row, heartLarge[row]);
-    delay(150);
+    delay(100);
+    
+    // Fade down
+    for (int brightness = LED_BRIGHTNESS; brightness >= 4; brightness -= 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
+    }
+    lc.setIntensity(0, LED_BRIGHTNESS); // Reset
     for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
     delay(100);
     
     // Beat 2
+    for (int brightness = 4; brightness <= LED_BRIGHTNESS; brightness += 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
+    }
     for (int row = 0; row < 8; row++) setRow(row, heartLarge[row]);
-    delay(150);
+    delay(100);
+    
+    for (int brightness = LED_BRIGHTNESS; brightness >= 4; brightness -= 2) {
+      lc.setIntensity(0, brightness);
+      delay(20);
+    }
+    lc.setIntensity(0, LED_BRIGHTNESS); // Reset
     for (int row = 0; row < 8; row++) setRow(row, heartSmall[row]);
-    delay(400);
+    delay(300);
     
     ArduinoOTA.handle();
   }
+  lc.setIntensity(0, LED_BRIGHTNESS); // Ensure reset
   lc.clearDisplay(0);
 }
 
-// ANIMATION 3: Fireworks - Exploding particles
+// ANIMATION 3: Fireworks - Exploding particles with dimming fade
 void animationFireworks(unsigned long duration) {
   unsigned long startTime = millis();
   
@@ -195,18 +253,43 @@ void animationFireworks(unsigned long duration) {
       ArduinoOTA.handle();
     }
     
-    // Explode outward (classic explosion pattern from LED demos)
+    // Store explosion pattern for dimming effect
+    bool explosion[8][8] = {false};
+    
+    // Explode outward - build up pattern
     for (int radius = 0; radius < 5; radius++) {
-      lc.clearDisplay(0);
       for (int angle = 0; angle < 16; angle++) {
         float rad = angle * 3.14159 / 8.0;
         int x = centerX + (int)(radius * cos(rad));
         int y = centerY + (int)(radius * sin(rad));
         if (x >= 0 && x < 8 && y >= 0 && y < 8) {
-          setLed(y, x, true);
+          explosion[y][x] = true;
+        }
+      }
+      
+      // Draw current explosion state
+      lc.clearDisplay(0);
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          if (explosion[row][col]) setLed(row, col, true);
         }
       }
       delay(80);
+      ArduinoOTA.handle();
+    }
+    
+    // Dimming effect - fade out by showing progressively fewer LEDs
+    for (int fade = 0; fade < 4; fade++) {
+      lc.clearDisplay(0);
+      for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+          // Only show LED based on fade level and random chance
+          if (explosion[row][col] && random(0, fade + 1) == 0) {
+            setLed(row, col, true);
+          }
+        }
+      }
+      delay(100);
       ArduinoOTA.handle();
     }
     
@@ -215,12 +298,12 @@ void animationFireworks(unsigned long duration) {
   lc.clearDisplay(0);
 }
 
-// ANIMATION 4: Snake/Worm - Slithering across display
+// ANIMATION 4: Snake/Worm - Slithering across display with fading tail
 void animationSnake(unsigned long duration) {
   unsigned long startTime = millis();
   
   int snakeX[32], snakeY[32];
-  int snakeLength = 8;
+  int snakeLength = 10;
   int headX = 0, headY = 3;
   int dirX = 1, dirY = 0;
   
@@ -253,11 +336,15 @@ void animationSnake(unsigned long duration) {
     snakeX[0] = headX;
     snakeY[0] = headY;
     
-    // Draw snake
+    // Draw snake with fading tail (simulate dimming by skipping tail segments)
     lc.clearDisplay(0);
     for (int i = 0; i < snakeLength; i++) {
       if (snakeX[i] >= 0 && snakeX[i] < 8 && snakeY[i] >= 0 && snakeY[i] < 8) {
-        setLed(snakeY[i], snakeX[i], true);
+        // Tail segments fade out - show with decreasing probability
+        int fadeChance = i * 2; // Tail gets dimmer
+        if (i < 3 || random(0, fadeChance) < 5) {  // Head always shows, tail fades
+          setLed(snakeY[i], snakeX[i], true);
+        }
       }
     }
     
